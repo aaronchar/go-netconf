@@ -121,7 +121,7 @@ func (g *GoNCClient) ReadGroup(applygroup string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	g.Lock.Lock()
+
 	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
@@ -134,8 +134,6 @@ func (g *GoNCClient) ReadGroup(applygroup string) (string, error) {
 	}
 
 	err = drv.Close()
-
-	g.Lock.Unlock()
 
 	if err != nil {
 		return "", err
@@ -159,7 +157,6 @@ func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, comm
 
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
-	g.Lock.Lock()
 	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
@@ -167,7 +164,7 @@ func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, comm
 	_, err = drv.SendRaw(deleteString)
 	if err != nil {
 		errInternal := drv.Close()
-		g.Lock.Unlock()
+
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
@@ -176,7 +173,7 @@ func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, comm
 	reply, err := drv.SendRaw(groupString)
 	if err != nil {
 		errInternal := drv.Close()
-		g.Lock.Unlock()
+
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
@@ -184,7 +181,7 @@ func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, comm
 		_, err = drv.SendRaw(commitStr)
 		if err != nil {
 			errInternal := drv.Close()
-			g.Lock.Unlock()
+
 			return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 	}
@@ -192,11 +189,9 @@ func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, comm
 	err = drv.Close()
 
 	if err != nil {
-		g.Lock.Unlock()
+
 		return "", fmt.Errorf("driver close error: %+s", err)
 	}
-
-	g.Lock.Unlock()
 
 	return reply.Data, nil
 }
@@ -210,7 +205,6 @@ func (g *GoNCClient) DeleteConfig(applygroup string) (string, error) {
 
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
-	g.Lock.Lock()
 	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
@@ -218,22 +212,20 @@ func (g *GoNCClient) DeleteConfig(applygroup string) (string, error) {
 	reply, err := drv.SendRaw(deleteString)
 	if err != nil {
 		errInternal := drv.Close()
-		g.Lock.Unlock()
+
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
 	_, err = drv.SendRaw(commitStr)
 	if err != nil {
 		errInternal := drv.Close()
-		g.Lock.Unlock()
+
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
 	output := strings.Replace(reply.Data, "\n", "", -1)
 
 	err = drv.Close()
-
-	g.Lock.Unlock()
 
 	if err != nil {
 		log.Fatal(err)
@@ -253,7 +245,6 @@ func (g *GoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
-	g.Lock.Lock()
 	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
@@ -261,7 +252,7 @@ func (g *GoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 	reply, err := drv.SendRaw(deleteString)
 	if err != nil {
 		errInternal := drv.Close()
-		g.Lock.Unlock()
+
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
@@ -270,11 +261,9 @@ func (g *GoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 	err = drv.Close()
 
 	if err != nil {
-		g.Lock.Unlock()
+
 		return "", fmt.Errorf("driver close error: %+s", err)
 	}
-
-	g.Lock.Unlock()
 
 	return output, nil
 }
@@ -286,19 +275,16 @@ func (g *GoNCClient) SendCommit() error {
 		return err
 	}
 
-	g.Lock.Lock()
-
 	if err := drv.CreateSession(g.SSHClient); err != nil {
-		g.Lock.Unlock()
+
 		return err
 	}
 	_, err = drv.SendRaw(commitStr)
 	if err != nil {
-		g.Lock.Unlock()
+
 		return err
 	}
 
-	g.Lock.Unlock()
 	return nil
 }
 
@@ -349,8 +335,6 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 
 	groupString := fmt.Sprintf(groupStrXML, netconfcall)
 
-	g.Lock.Lock()
-
 	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
@@ -358,7 +342,7 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 	reply, err := drv.SendRaw(groupString)
 	if err != nil {
 		errInternal := drv.Close()
-		g.Lock.Unlock()
+
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
@@ -366,7 +350,7 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 		_, err = drv.SendRaw(commitStr)
 		if err != nil {
 			errInternal := drv.Close()
-			g.Lock.Unlock()
+
 			return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 	}
@@ -374,11 +358,9 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 	err = drv.Close()
 
 	if err != nil {
-		g.Lock.Unlock()
+
 		return "", err
 	}
-
-	g.Lock.Unlock()
 
 	return reply.Data, nil
 }
@@ -391,7 +373,6 @@ func (g *GoNCClient) ReadRawGroup(applygroup string) (string, error) {
 		return "", err
 	}
 
-	g.Lock.Lock()
 	if err := drv.CreateSession(g.SSHClient); err != nil {
 		return "", err
 	}
@@ -400,13 +381,11 @@ func (g *GoNCClient) ReadRawGroup(applygroup string) (string, error) {
 	reply, err := drv.SendRaw(getGroupXMLString)
 	if err != nil {
 		errInternal := drv.Close()
-		g.Lock.Unlock()
+
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
 	err = drv.Close()
-
-	g.Lock.Unlock()
 
 	if err != nil {
 		return "", err

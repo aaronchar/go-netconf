@@ -2,6 +2,7 @@ package junos_helpers
 
 import (
 	"bufio"
+
 	"encoding/xml"
 	"fmt"
 	"io/ioutil"
@@ -11,7 +12,6 @@ import (
 
 	driver "github.com/davedotdev/go-netconf/drivers/driver"
 	sshdriver "github.com/davedotdev/go-netconf/drivers/ssh"
-
 	"golang.org/x/crypto/ssh"
 )
 
@@ -53,14 +53,21 @@ const getGroupXMLStr = `<get-configuration>
 
 // GoNCClient type for storing data and wrapping functions
 type GoNCClient struct {
+	Target    string
+	Host      string
+	Port      int
+	SSHConfig *ssh.ClientConfig
 	SSHClient *ssh.Client
-	Driver    driver.Driver
-	Lock      sync.RWMutex
+	// Driver driver.Driver
+	Lock sync.RWMutex
 }
 
 // Close is a functional thing to close the Driver
 func (g *GoNCClient) Close() error {
-	g.Driver = nil
+	g.Target = ""
+	g.SSHConfig = nil
+	g.SSHClient = nil
+	// g.Driver = nil
 	return nil
 }
 
@@ -110,21 +117,23 @@ func parseGroupData(input string) (reply string, err error) {
 
 // ReadGroup is a helper function
 func (g *GoNCClient) ReadGroup(applygroup string) (string, error) {
-	g.Lock.Lock()
-	err := g.Driver.CreateSession(g.SSHClient)
-
+	drv, err := g.NewSessionClient()
 	if err != nil {
+		return "", err
+	}
+	g.Lock.Lock()
+	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
 
 	getGroupString := fmt.Sprintf(getGroupStr, applygroup)
 
-	reply, err := g.Driver.SendRaw(getGroupString)
+	reply, err := drv.SendRaw(getGroupString)
 	if err != nil {
 		return "", err
 	}
 
-	err = g.Driver.Close()
+	err = drv.Close()
 
 	g.Lock.Unlock()
 
@@ -143,40 +152,44 @@ func (g *GoNCClient) ReadGroup(applygroup string) (string, error) {
 // UpdateRawConfig deletes group data and replaces it (for Update in TF)
 func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, commit bool) (string, error) {
 
+	drv, err := g.NewSessionClient()
+	if err != nil {
+		return "", err
+	}
+
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
 	g.Lock.Lock()
-	err := g.Driver.CreateSession(g.SSHClient)
-	if err != nil {
+	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
 
-	_, err = g.Driver.SendRaw(deleteString)
+	_, err = drv.SendRaw(deleteString)
 	if err != nil {
-		errInternal := g.Driver.Close()
+		errInternal := drv.Close()
 		g.Lock.Unlock()
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
 	groupString := fmt.Sprintf(groupStrXML, netconfcall)
 
-	reply, err := g.Driver.SendRaw(groupString)
+	reply, err := drv.SendRaw(groupString)
 	if err != nil {
-		errInternal := g.Driver.Close()
+		errInternal := drv.Close()
 		g.Lock.Unlock()
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
 	if commit {
-		_, err = g.Driver.SendRaw(commitStr)
+		_, err = drv.SendRaw(commitStr)
 		if err != nil {
-			errInternal := g.Driver.Close()
+			errInternal := drv.Close()
 			g.Lock.Unlock()
 			return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 	}
 
-	err = g.Driver.Close()
+	err = drv.Close()
 
 	if err != nil {
 		g.Lock.Unlock()
@@ -190,32 +203,35 @@ func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, comm
 
 // DeleteConfig is a wrapper for driver.SendRaw()
 func (g *GoNCClient) DeleteConfig(applygroup string) (string, error) {
+	drv, err := g.NewSessionClient()
+	if err != nil {
+		return "", err
+	}
 
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
 	g.Lock.Lock()
-	err := g.Driver.CreateSession(g.SSHClient)
-	if err != nil {
+	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
 
-	reply, err := g.Driver.SendRaw(deleteString)
+	reply, err := drv.SendRaw(deleteString)
 	if err != nil {
-		errInternal := g.Driver.Close()
+		errInternal := drv.Close()
 		g.Lock.Unlock()
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
-	_, err = g.Driver.SendRaw(commitStr)
+	_, err = drv.SendRaw(commitStr)
 	if err != nil {
-		errInternal := g.Driver.Close()
+		errInternal := drv.Close()
 		g.Lock.Unlock()
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
 	output := strings.Replace(reply.Data, "\n", "", -1)
 
-	err = g.Driver.Close()
+	err = drv.Close()
 
 	g.Lock.Unlock()
 
@@ -230,24 +246,28 @@ func (g *GoNCClient) DeleteConfig(applygroup string) (string, error) {
 // Does not provide mandatory commit unlike DeleteConfig()
 func (g *GoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 
+	drv, err := g.NewSessionClient()
+	if err != nil {
+		return "", err
+	}
+
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
 	g.Lock.Lock()
-	err := g.Driver.CreateSession(g.SSHClient)
-	if err != nil {
+	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
 
-	reply, err := g.Driver.SendRaw(deleteString)
+	reply, err := drv.SendRaw(deleteString)
 	if err != nil {
-		errInternal := g.Driver.Close()
+		errInternal := drv.Close()
 		g.Lock.Unlock()
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
 	output := strings.Replace(reply.Data, "\n", "", -1)
 
-	err = g.Driver.Close()
+	err = drv.Close()
 
 	if err != nil {
 		g.Lock.Unlock()
@@ -261,16 +281,18 @@ func (g *GoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 
 // SendCommit is a wrapper for driver.SendRaw()
 func (g *GoNCClient) SendCommit() error {
-	g.Lock.Lock()
-
-	err := g.Driver.CreateSession(g.SSHClient)
-
+	drv, err := g.NewSessionClient()
 	if err != nil {
-		g.Lock.Unlock()
 		return err
 	}
 
-	_, err = g.Driver.SendRaw(commitStr)
+	g.Lock.Lock()
+
+	if err := drv.CreateSession(g.SSHClient); err != nil {
+		g.Lock.Unlock()
+		return err
+	}
+	_, err = drv.SendRaw(commitStr)
 	if err != nil {
 		g.Lock.Unlock()
 		return err
@@ -320,33 +342,36 @@ func (g *GoNCClient) SendTransaction(id string, obj interface{}, commit bool) er
 // SendRawConfig is a wrapper for driver.SendRaw()
 func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, error) {
 
+	drv, err := g.NewSessionClient()
+	if err != nil {
+		return "", err
+	}
+
 	groupString := fmt.Sprintf(groupStrXML, netconfcall)
 
 	g.Lock.Lock()
 
-	err := g.Driver.CreateSession(g.SSHClient)
-
-	if err != nil {
+	if err := drv.CreateSession(g.SSHClient); err != nil {
 		log.Fatal(err)
 	}
 
-	reply, err := g.Driver.SendRaw(groupString)
+	reply, err := drv.SendRaw(groupString)
 	if err != nil {
-		errInternal := g.Driver.Close()
+		errInternal := drv.Close()
 		g.Lock.Unlock()
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
 	if commit {
-		_, err = g.Driver.SendRaw(commitStr)
+		_, err = drv.SendRaw(commitStr)
 		if err != nil {
-			errInternal := g.Driver.Close()
+			errInternal := drv.Close()
 			g.Lock.Unlock()
 			return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 	}
 
-	err = g.Driver.Close()
+	err = drv.Close()
 
 	if err != nil {
 		g.Lock.Unlock()
@@ -360,23 +385,26 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 
 // ReadRawGroup is a helper function
 func (g *GoNCClient) ReadRawGroup(applygroup string) (string, error) {
-	g.Lock.Lock()
-	err := g.Driver.CreateSession(g.SSHClient)
 
+	drv, err := g.NewSessionClient()
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 
+	g.Lock.Lock()
+	if err := drv.CreateSession(g.SSHClient); err != nil {
+		return "", err
+	}
 	getGroupXMLString := fmt.Sprintf(getGroupXMLStr, applygroup)
 
-	reply, err := g.Driver.SendRaw(getGroupXMLString)
+	reply, err := drv.SendRaw(getGroupXMLString)
 	if err != nil {
-		errInternal := g.Driver.Close()
+		errInternal := drv.Close()
 		g.Lock.Unlock()
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
 
-	err = g.Driver.Close()
+	err = drv.Close()
 
 	g.Lock.Unlock()
 
@@ -387,6 +415,15 @@ func (g *GoNCClient) ReadRawGroup(applygroup string) (string, error) {
 	return reply.Data, nil
 }
 
+func (g *GoNCClient) NewSessionClient() (driver.Driver, error) {
+	d := driver.New(sshdriver.New())
+	nc := d.(*sshdriver.DriverSSH)
+
+	nc.Host = g.Host
+	nc.Port = g.Port
+	nc.SSHConfig = g.SSHConfig
+	return nc, nil
+}
 func publicKeyFile(file string) ssh.AuthMethod {
 	buffer, err := ioutil.ReadFile(file)
 	if err != nil {
@@ -403,19 +440,10 @@ func publicKeyFile(file string) ssh.AuthMethod {
 // NewClient returns gonetconf new client driver
 func NewClient(username string, password string, sshkey string, address string, port int) (*GoNCClient, error) {
 
-	// Dummy interface var ready for loading from inputs
-	var nconf driver.Driver
-
-	d := driver.New(sshdriver.New())
-
-	nc := d.(*sshdriver.DriverSSH)
-
-	nc.Host = address
-	nc.Port = port
-
+	var sshCfg *ssh.ClientConfig
 	// SSH keys takes priority over password based
 	if sshkey != "" {
-		nc.SSHConfig = &ssh.ClientConfig{
+		sshCfg = &ssh.ClientConfig{
 			User: username,
 			Auth: []ssh.AuthMethod{
 				publicKeyFile(sshkey),
@@ -424,18 +452,25 @@ func NewClient(username string, password string, sshkey string, address string, 
 		}
 	} else {
 		// Sort yourself out with SSH. Easiest to do that here.
-		nc.SSHConfig = &ssh.ClientConfig{
+		sshCfg = &ssh.ClientConfig{
 			User:            username,
 			Auth:            []ssh.AuthMethod{ssh.Password(password)},
 			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		}
 	}
-	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", nc.Host, nc.Port), nc.SSHConfig)
+	target := fmt.Sprintf("%s:%d", address, port)
+	client, err := ssh.Dial("tcp", target, sshCfg)
 	if err != nil {
 		return nil, err
 	}
 
-	nconf = nc
+	// nconf = nc
 
-	return &GoNCClient{Driver: nconf, SSHClient: client}, nil
+	return &GoNCClient{
+		Host:      address,
+		Port:      port,
+		Target:    target,
+		SSHConfig: sshCfg,
+		SSHClient: client,
+	}, nil
 }

@@ -4,7 +4,10 @@
 
 package netconf
 
-import rpc "github.com/davedotdev/go-netconf/rpc"
+import (
+	rpc "github.com/davedotdev/go-netconf/rpc"
+	"golang.org/x/crypto/ssh"
+)
 
 // Driver interface for building drivers that are self-contained from a user's perspective.
 type Driver interface {
@@ -14,6 +17,7 @@ type Driver interface {
 	Close() error
 	Dial() error
 	DialTimeout() error
+	CreateSession(client *ssh.Client) error
 	SendRaw(rawxml string) (*rpc.RPCReply, error)
 	GetConfig() (*rpc.RPCReply, error)
 }

@@ -36,6 +36,7 @@ type TransportSSH struct {
 	transport.TransportBasicIO              // Embedded Transport basic IO base type
 	SSHClient                  *ssh.Client  // SSH Client
 	SSHSession                 *ssh.Session // SSH Client Session
+	RetainSSHClient            bool
 }
 
 // Close closes an existing SSH session and socket if they exist.
@@ -47,19 +48,20 @@ func (t *TransportSSH) Close() error {
 			return err
 		}
 	}
+	// If we want to re-use the existing ssh client we need to avoid closing it and instead \
+	// just close the session
+	if !t.RetainSSHClient {
+		// Close and check for nil. Even though closed, it will retain data for session etc.
+		if err := t.SSHClient.Close(); err != nil {
+			return (err)
+		}
 
-	// Close and check for nil. Even though closed, it will retain data for session etc.
-	err := t.SSHClient.Close()
-
-	if err != nil {
-		return (err)
 	}
 
-	err = t.TransportBasicIO.Close()
-	if err != nil {
+	// This will trigger the kill-session command on the transport layer
+	if err := t.TransportBasicIO.Close(); err != nil {
 		return (err)
 	}
-
 	return nil
 }
 
@@ -95,6 +97,20 @@ func (t *TransportSSH) DialSSH(target string, config *ssh.ClientConfig, port int
 		return err
 	}
 
+	return nil
+}
+
+// SessionFromClient establishes an SSH session based on an existing client
+//
+// This ensures that we limit the number of concurrent TCP sockets to the remote host
+func (t *TransportSSH) SessionFromClient(client *ssh.Client) error {
+
+	t.SSHClient = client // This really shouldn't be needed here since we don't want to touch the underlying client
+	t.RetainSSHClient = true
+
+	if err := t.SetupSession(); err != nil {
+		return err
+	}
 	return nil
 }
 

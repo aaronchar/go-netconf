@@ -79,6 +79,23 @@ func (d *DriverSSH) DialTimeout() error {
 	return nil
 }
 
+// CreateSession will configure a new transport session based off and existing ssh client connection
+func (d *DriverSSH) CreateSession(client *ssh.Client) error {
+
+	d.Target = client.RemoteAddr().String()
+
+	if err := d.Transport.SessionFromClient(client); err != nil {
+		return err
+	}
+	var err error
+	d.Session, err = session.NewSession(d.Transport)
+
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Close function closes the socket
 func (d *DriverSSH) Close() error {
 

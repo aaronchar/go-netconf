@@ -53,8 +53,9 @@ const getGroupXMLStr = `<get-configuration>
 
 // GoNCClient type for storing data and wrapping functions
 type GoNCClient struct {
-	Driver driver.Driver
-	Lock   sync.RWMutex
+	SSHClient *ssh.Client
+	Driver    driver.Driver
+	Lock      sync.RWMutex
 }
 
 // Close is a functional thing to close the Driver
@@ -110,7 +111,7 @@ func parseGroupData(input string) (reply string, err error) {
 // ReadGroup is a helper function
 func (g *GoNCClient) ReadGroup(applygroup string) (string, error) {
 	g.Lock.Lock()
-	err := g.Driver.Dial()
+	err := g.Driver.CreateSession(g.SSHClient)
 
 	if err != nil {
 		log.Fatal(err)
@@ -145,7 +146,7 @@ func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, comm
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
 	g.Lock.Lock()
-	err := g.Driver.Dial()
+	err := g.Driver.CreateSession(g.SSHClient)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -193,7 +194,7 @@ func (g *GoNCClient) DeleteConfig(applygroup string) (string, error) {
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
 	g.Lock.Lock()
-	err := g.Driver.Dial()
+	err := g.Driver.CreateSession(g.SSHClient)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -232,7 +233,7 @@ func (g *GoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
 	g.Lock.Lock()
-	err := g.Driver.Dial()
+	err := g.Driver.CreateSession(g.SSHClient)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -262,7 +263,7 @@ func (g *GoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 func (g *GoNCClient) SendCommit() error {
 	g.Lock.Lock()
 
-	err := g.Driver.Dial()
+	err := g.Driver.CreateSession(g.SSHClient)
 
 	if err != nil {
 		g.Lock.Unlock()
@@ -323,7 +324,7 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 
 	g.Lock.Lock()
 
-	err := g.Driver.Dial()
+	err := g.Driver.CreateSession(g.SSHClient)
 
 	if err != nil {
 		log.Fatal(err)
@@ -360,7 +361,7 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 // ReadRawGroup is a helper function
 func (g *GoNCClient) ReadRawGroup(applygroup string) (string, error) {
 	g.Lock.Lock()
-	err := g.Driver.Dial()
+	err := g.Driver.CreateSession(g.SSHClient)
 
 	if err != nil {
 		log.Fatal(err)
@@ -429,8 +430,12 @@ func NewClient(username string, password string, sshkey string, address string, 
 			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		}
 	}
+	client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", nc.Host, nc.Port), nc.SSHConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	nconf = nc
 
-	return &GoNCClient{Driver: nconf}, nil
+	return &GoNCClient{Driver: nconf, SSHClient: client}, nil
 }

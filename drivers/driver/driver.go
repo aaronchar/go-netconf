@@ -18,6 +18,7 @@ type Driver interface {
 	Dial() error
 	DialTimeout() error
 	CreateSession(client *ssh.Client) error
+	ExistingSession(s *ssh.Session) error
 	SendRaw(rawxml string) (*rpc.RPCReply, error)
 	GetConfig() (*rpc.RPCReply, error)
 }

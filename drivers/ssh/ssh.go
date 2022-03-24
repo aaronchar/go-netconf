@@ -70,7 +70,7 @@ func (d *DriverSSH) DialTimeout() error {
 		return err
 	}
 
-	err = d.Transport.SetupSession()
+	err = d.Transport.SetupSession(nil)
 
 	if err != nil {
 		return err
@@ -87,6 +87,17 @@ func (d *DriverSSH) CreateSession(client *ssh.Client) error {
 	if err := d.Transport.SessionFromClient(client); err != nil {
 		return err
 	}
+	var err error
+	d.Session, err = session.NewSession(d.Transport)
+
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (d *DriverSSH) ExistingSession(s *ssh.Session) error {
+	d.Transport.SetupSession(s)
 	var err error
 	d.Session, err = session.NewSession(d.Transport)
 

@@ -12,6 +12,7 @@ import (
 
 	driver "github.com/davedotdev/go-netconf/drivers/driver"
 	sshdriver "github.com/davedotdev/go-netconf/drivers/ssh"
+	sshpool "github.com/davedotdev/go-netconf/helpers/sshpool"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -53,11 +54,10 @@ const getGroupXMLStr = `<get-configuration>
 
 // GoNCClient type for storing data and wrapping functions
 type GoNCClient struct {
-	Target    string
-	Host      string
-	Port      int
-	SSHConfig *ssh.ClientConfig
-	SSHClient *ssh.Client
+	Target  string
+	Host    string
+	Port    int
+	SSHPool *sshpool.Pool
 	// Driver driver.Driver
 	Lock sync.RWMutex
 }
@@ -65,8 +65,6 @@ type GoNCClient struct {
 // Close is a functional thing to close the Driver
 func (g *GoNCClient) Close() error {
 	g.Target = ""
-	g.SSHConfig = nil
-	g.SSHClient = nil
 	// g.Driver = nil
 	return nil
 }
@@ -121,8 +119,9 @@ func (g *GoNCClient) ReadGroup(applygroup string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	session, err := g.SSHPool.Get(g.Target)
 
-	if err := drv.CreateSession(g.SSHClient); err != nil {
+	if err := drv.ExistingSession(session.Session); err != nil {
 		log.Fatal(err)
 	}
 
@@ -132,7 +131,7 @@ func (g *GoNCClient) ReadGroup(applygroup string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-
+	session.Put()
 	err = drv.Close()
 
 	if err != nil {
@@ -154,10 +153,11 @@ func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, comm
 	if err != nil {
 		return "", err
 	}
+	session, err := g.SSHPool.Get(g.Target)
 
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
-	if err := drv.CreateSession(g.SSHClient); err != nil {
+	if err := drv.ExistingSession(session.Session); err != nil {
 		log.Fatal(err)
 	}
 
@@ -185,7 +185,7 @@ func (g *GoNCClient) UpdateRawConfig(applygroup string, netconfcall string, comm
 			return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 	}
-
+	session.Put()
 	err = drv.Close()
 
 	if err != nil {
@@ -202,10 +202,11 @@ func (g *GoNCClient) DeleteConfig(applygroup string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	session, err := g.SSHPool.Get(g.Target)
 
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
-	if err := drv.CreateSession(g.SSHClient); err != nil {
+	if err := drv.ExistingSession(session.Session); err != nil {
 		log.Fatal(err)
 	}
 
@@ -224,7 +225,7 @@ func (g *GoNCClient) DeleteConfig(applygroup string) (string, error) {
 	}
 
 	output := strings.Replace(reply.Data, "\n", "", -1)
-
+	session.Put()
 	err = drv.Close()
 
 	if err != nil {
@@ -242,10 +243,11 @@ func (g *GoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	session, err := g.SSHPool.Get(g.Target)
 
 	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
 
-	if err := drv.CreateSession(g.SSHClient); err != nil {
+	if err := drv.ExistingSession(session.Session); err != nil {
 		log.Fatal(err)
 	}
 
@@ -257,7 +259,7 @@ func (g *GoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 	}
 
 	output := strings.Replace(reply.Data, "\n", "", -1)
-
+	session.Put()
 	err = drv.Close()
 
 	if err != nil {
@@ -274,8 +276,8 @@ func (g *GoNCClient) SendCommit() error {
 	if err != nil {
 		return err
 	}
-
-	if err := drv.CreateSession(g.SSHClient); err != nil {
+	session, err := g.SSHPool.Get(g.Target)
+	if err := drv.ExistingSession(session.Session); err != nil {
 
 		return err
 	}
@@ -332,10 +334,11 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 	if err != nil {
 		return "", err
 	}
+	session, err := g.SSHPool.Get(g.Target)
 
 	groupString := fmt.Sprintf(groupStrXML, netconfcall)
 
-	if err := drv.CreateSession(g.SSHClient); err != nil {
+	if err := drv.ExistingSession(session.Session); err != nil {
 		log.Fatal(err)
 	}
 
@@ -354,7 +357,7 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 			return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 	}
-
+	session.Put()
 	err = drv.Close()
 
 	if err != nil {
@@ -372,8 +375,9 @@ func (g *GoNCClient) ReadRawGroup(applygroup string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	session, err := g.SSHPool.Get(g.Target)
 
-	if err := drv.CreateSession(g.SSHClient); err != nil {
+	if err := drv.ExistingSession(session.Session); err != nil {
 		return "", err
 	}
 	getGroupXMLString := fmt.Sprintf(getGroupXMLStr, applygroup)
@@ -384,7 +388,7 @@ func (g *GoNCClient) ReadRawGroup(applygroup string) (string, error) {
 
 		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
-
+	session.Put()
 	err = drv.Close()
 
 	if err != nil {
@@ -400,7 +404,7 @@ func (g *GoNCClient) NewSessionClient() (driver.Driver, error) {
 
 	nc.Host = g.Host
 	nc.Port = g.Port
-	nc.SSHConfig = g.SSHConfig
+
 	return nc, nil
 }
 func publicKeyFile(file string) ssh.AuthMethod {
@@ -438,18 +442,20 @@ func NewClient(username string, password string, sshkey string, address string, 
 		}
 	}
 	target := fmt.Sprintf("%s:%d", address, port)
-	client, err := ssh.Dial("tcp", target, sshCfg)
-	if err != nil {
-		return nil, err
-	}
+	// client, err := ssh.Dial("tcp", target, sshCfg)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	// nconf = nc
-
+	pool := sshpool.New(sshCfg, &sshpool.PoolConfig{
+		MaxSessions:    10,
+		MaxConnections: 5,
+	})
 	return &GoNCClient{
-		Host:      address,
-		Port:      port,
-		Target:    target,
-		SSHConfig: sshCfg,
-		SSHClient: client,
+		Host:    address,
+		Port:    port,
+		Target:  target,
+		SSHPool: pool,
 	}, nil
 }

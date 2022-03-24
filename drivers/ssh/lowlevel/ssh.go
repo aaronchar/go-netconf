@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net"
 	"os"
@@ -92,7 +93,7 @@ func (t *TransportSSH) DialSSH(target string, config *ssh.ClientConfig, port int
 
 	t.SSHClient = SSHClient
 
-	err = t.SetupSession()
+	err = t.SetupSession(nil)
 	if err != nil {
 		return err
 	}
@@ -108,31 +109,40 @@ func (t *TransportSSH) SessionFromClient(client *ssh.Client) error {
 	t.SSHClient = client // This really shouldn't be needed here since we don't want to touch the underlying client
 	t.RetainSSHClient = true
 
-	if err := t.SetupSession(); err != nil {
+	if err := t.SetupSession(nil); err != nil {
 		return err
 	}
 	return nil
 }
+func (t *TransportSSH) WireUpPipes(session *ssh.Session) (io.WriteCloser, io.Reader, error) {
+	writer, err := session.StdinPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	reader, err := session.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	return writer, reader, nil
+}
 
 // SetupSession sorts out wiring
-func (t *TransportSSH) SetupSession() error {
+func (t *TransportSSH) SetupSession(session *ssh.Session) error {
 	var err error
+	if session == nil {
+		t.SSHSession, err = t.SSHClient.NewSession()
+		if err != nil {
+			return err
+		}
+	} else {
+		t.SSHSession = session
+	}
 
-	t.SSHSession, err = t.SSHClient.NewSession()
+	writer, reader, err := t.WireUpPipes(t.SSHSession)
 	if err != nil {
 		return err
 	}
-
-	writer, err := t.SSHSession.StdinPipe()
-	if err != nil {
-		return err
-	}
-
-	reader, err := t.SSHSession.StdoutPipe()
-	if err != nil {
-		return err
-	}
-
 	t.ReadWriteCloser = transport.NewReadWriteCloser(reader, writer)
 	return t.SSHSession.RequestSubsystem(sshNetconfSubsystem)
 }
@@ -280,7 +290,7 @@ func connToTransport(conn net.Conn, config *ssh.ClientConfig) (*TransportSSH, er
 	t := &TransportSSH{}
 	t.SSHClient = ssh.NewClient(c, chans, reqs)
 
-	err = t.SetupSession()
+	err = t.SetupSession(nil)
 	if err != nil {
 		return nil, err
 	}

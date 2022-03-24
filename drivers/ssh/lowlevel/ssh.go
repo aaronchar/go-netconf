@@ -38,13 +38,14 @@ type TransportSSH struct {
 	SSHClient                  *ssh.Client  // SSH Client
 	SSHSession                 *ssh.Session // SSH Client Session
 	RetainSSHClient            bool
+	RetainSSHSession           bool
 }
 
 // Close closes an existing SSH session and socket if they exist.
 func (t *TransportSSH) Close() error {
 	// Close the SSH Session if we have one
 
-	if t.SSHSession != nil {
+	if t.SSHSession != nil && !t.RetainSSHSession {
 		if err := t.SSHSession.Close(); err != nil && err.Error() != "EOF" {
 			return err
 		}

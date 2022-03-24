@@ -97,6 +97,8 @@ func (d *DriverSSH) CreateSession(client *ssh.Client) error {
 }
 
 func (d *DriverSSH) ExistingSession(s *ssh.Session) error {
+	d.Transport.RetainSSHClient = true
+	d.Transport.RetainSSHSession = true
 	d.Transport.SetupSession(s)
 	var err error
 	d.Session, err = session.NewSession(d.Transport)

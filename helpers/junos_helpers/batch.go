@@ -1,8 +1,8 @@
 package junos_helpers
 
 import (
-	"encoding/xml"
 	"fmt"
+	"github.com/antchfx/xmlquery"
 	"log"
 	"strings"
 	"sync"
@@ -12,10 +12,24 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+const batchGetGroupStr = `<get-configuration database="committed" format="text" >
+<configuration>
+<groups></groups>
+</configuration>
+</get-configuration>
+`
+const batchGetGroupXMLStr = `<get-configuration>
+  <configuration>
+  <groups></groups>
+  </configuration>
+</get-configuration>
+`
+
 // BatchGoNCClient type for storing data and wrapping functions
 type BatchGoNCClient struct {
-	Driver driver.Driver
-	Lock   sync.RWMutex
+	Driver    driver.Driver
+	Lock      sync.RWMutex
+	readCache string
 }
 
 // Close is a functional thing to close the Driver
@@ -27,171 +41,35 @@ func (g *BatchGoNCClient) Close() error {
 // ReadGroup is a helper function
 func (g *BatchGoNCClient) ReadGroup(applygroup string) (string, error) {
 	g.Lock.Lock()
-	err := g.Driver.Dial()
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	getGroupString := fmt.Sprintf(getGroupStr, applygroup)
-
-	reply, err := g.Driver.SendRaw(getGroupString)
-	if err != nil {
-		return "", err
-	}
-
-	err = g.Driver.Close()
-
 	g.Lock.Unlock()
-
-	if err != nil {
-		return "", err
-	}
-
-	parsedGroupData, err := parseGroupData(reply.Data)
-	if err != nil {
-		return "", err
-	}
-
-	return parsedGroupData, nil
+	return "", nil
 }
 
 // UpdateRawConfig deletes group data and replaces it (for Update in TF)
 func (g *BatchGoNCClient) UpdateRawConfig(applygroup string, netconfcall string, commit bool) (string, error) {
-
-	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
-
 	g.Lock.Lock()
-	err := g.Driver.Dial()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	_, err = g.Driver.SendRaw(deleteString)
-	if err != nil {
-		errInternal := g.Driver.Close()
-		g.Lock.Unlock()
-		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
-	}
-
-	groupString := fmt.Sprintf(groupStrXML, netconfcall)
-
-	reply, err := g.Driver.SendRaw(groupString)
-	if err != nil {
-		errInternal := g.Driver.Close()
-		g.Lock.Unlock()
-		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
-	}
-
-	if commit {
-		_, err = g.Driver.SendRaw(commitStr)
-		if err != nil {
-			errInternal := g.Driver.Close()
-			g.Lock.Unlock()
-			return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
-		}
-	}
-
-	err = g.Driver.Close()
-
-	if err != nil {
-		g.Lock.Unlock()
-		return "", fmt.Errorf("driver close error: %+s", err)
-	}
-
 	g.Lock.Unlock()
-
-	return reply.Data, nil
+	return "", nil
 }
 
 // DeleteConfig is a wrapper for driver.SendRaw()
 func (g *BatchGoNCClient) DeleteConfig(applygroup string) (string, error) {
-
-	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
-
 	g.Lock.Lock()
-	err := g.Driver.Dial()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	reply, err := g.Driver.SendRaw(deleteString)
-	if err != nil {
-		errInternal := g.Driver.Close()
-		g.Lock.Unlock()
-		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
-	}
-
-	_, err = g.Driver.SendRaw(commitStr)
-	if err != nil {
-		errInternal := g.Driver.Close()
-		g.Lock.Unlock()
-		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
-	}
-
-	output := strings.Replace(reply.Data, "\n", "", -1)
-
-	err = g.Driver.Close()
-
 	g.Lock.Unlock()
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return output, nil
+	return "", nil
 }
 
 // DeleteConfigNoCommit is a wrapper for driver.SendRaw()
 // Does not provide mandatory commit unlike DeleteConfig()
 func (g *BatchGoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
-
-	deleteString := fmt.Sprintf(deleteStr, applygroup, applygroup)
-
 	g.Lock.Lock()
-	err := g.Driver.Dial()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	reply, err := g.Driver.SendRaw(deleteString)
-	if err != nil {
-		errInternal := g.Driver.Close()
-		g.Lock.Unlock()
-		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
-	}
-
-	output := strings.Replace(reply.Data, "\n", "", -1)
-
-	err = g.Driver.Close()
-
-	if err != nil {
-		g.Lock.Unlock()
-		return "", fmt.Errorf("driver close error: %+s", err)
-	}
-
 	g.Lock.Unlock()
-
-	return output, nil
+	return "", nil
 }
 
 // SendCommit is a wrapper for driver.SendRaw()
 func (g *BatchGoNCClient) SendCommit() error {
 	g.Lock.Lock()
-
-	err := g.Driver.Dial()
-
-	if err != nil {
-		g.Lock.Unlock()
-		return err
-	}
-
-	_, err = g.Driver.SendRaw(commitStr)
-	if err != nil {
-		g.Lock.Unlock()
-		return err
-	}
-
 	g.Lock.Unlock()
 	return nil
 }
@@ -203,104 +81,53 @@ func (g *BatchGoNCClient) MarshalGroup(id string, obj interface{}) error {
 	if err != nil {
 		return err
 	}
-
-	err = xml.Unmarshal([]byte(reply), &obj)
+	doc, err := xmlquery.Parse(strings.NewReader(reply))
 	if err != nil {
-		return err
+		panic(err)
 	}
+	// reply will contain all the groups that have been provisioned on the device
+	// we now need to find the one related to this exact reference
 	return nil
 }
 
 // SendTransaction is a method that unnmarshals the XML, creates the transaction and passes in a commit
 func (g *BatchGoNCClient) SendTransaction(id string, obj interface{}, commit bool) error {
-	jconfig, err := xml.Marshal(obj)
-
-	if err != nil {
-		return err
-	}
-
-	// UpdateRawConfig deletes old group by, re-creates it then commits.
-	// As far as Junos cares, it's an edit.
-	if id != "" {
-		_, err = g.UpdateRawConfig(id, string(jconfig), commit)
-	} else {
-		_, err = g.SendRawConfig(string(jconfig), commit)
-	}
-
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
 // SendRawConfig is a wrapper for driver.SendRaw()
 func (g *BatchGoNCClient) SendRawConfig(netconfcall string, commit bool) (string, error) {
+	g.Lock.Lock()
+	g.Lock.Unlock()
+	return "", nil
+}
 
-	groupString := fmt.Sprintf(groupStrXML, netconfcall)
+// ReadRawGroup is a helper function
+func (g *BatchGoNCClient) ReadRawGroup(applygroup string) (string, error) {
 
 	g.Lock.Lock()
-
-	err := g.Driver.Dial()
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	reply, err := g.Driver.SendRaw(groupString)
-	if err != nil {
-		errInternal := g.Driver.Close()
-		g.Lock.Unlock()
-		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
-	}
-
-	if commit {
-		_, err = g.Driver.SendRaw(commitStr)
+	output := g.readCache
+	// We only want to capture all the groups the first execution
+	// after that we depend up on this cache for the duration of the execution
+	if g.readCache == "" {
+		if err := g.Driver.Dial(); err != nil {
+			log.Fatal(err)
+		}
+		reply, err := g.Driver.SendRaw(batchGetGroupXMLStr)
 		if err != nil {
 			errInternal := g.Driver.Close()
 			g.Lock.Unlock()
 			return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
+		if err := g.Driver.Close(); err != nil {
+			return "", err
+		}
+		g.readCache = reply.Data
+		output = g.readCache
+		println(output)
 	}
-
-	err = g.Driver.Close()
-
-	if err != nil {
-		g.Lock.Unlock()
-		return "", err
-	}
-
 	g.Lock.Unlock()
-
-	return reply.Data, nil
-}
-
-// ReadRawGroup is a helper function
-func (g *BatchGoNCClient) ReadRawGroup(applygroup string) (string, error) {
-	g.Lock.Lock()
-	err := g.Driver.Dial()
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	getGroupXMLString := fmt.Sprintf(getGroupXMLStr, applygroup)
-
-	reply, err := g.Driver.SendRaw(getGroupXMLString)
-	if err != nil {
-		errInternal := g.Driver.Close()
-		g.Lock.Unlock()
-		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
-	}
-
-	err = g.Driver.Close()
-
-	g.Lock.Unlock()
-
-	if err != nil {
-		return "", err
-	}
-
-	return reply.Data, nil
+	return output, nil
 }
 
 // NewClient returns gonetconf new client driver

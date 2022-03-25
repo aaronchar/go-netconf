@@ -3,6 +3,7 @@ module github.com/davedotdev/go-netconf
 go 1.14
 
 require (
+	github.com/antchfx/xmlquery v1.3.10 // indirect
 	github.com/google/go-cmp v0.4.1
-	golang.org/x/crypto v0.0.0-20200604202706-70a84ac30bf9
+	golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9
 )

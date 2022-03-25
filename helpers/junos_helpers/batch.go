@@ -97,7 +97,10 @@ func (g *BatchGoNCClient) DeleteConfig(applygroup string) (string, error) {
 // Does not provide mandatory commit unlike DeleteConfig()
 func (g *BatchGoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 	g.Lock.Lock()
+	// Due to the way this functions any resource deletes will only happen client site
+	// however a full destroy will be committed to the server.
 	g.deleteCache += fmt.Sprintf(batchDeletePayload, applygroup)
+
 	g.Lock.Unlock()
 	return "", nil
 }
@@ -105,26 +108,44 @@ func (g *BatchGoNCClient) DeleteConfigNoCommit(applygroup string) (string, error
 // SendCommit is a wrapper for driver.SendRaw()
 func (g *BatchGoNCClient) SendCommit() error {
 
-	groupString := fmt.Sprintf(batchGroupStrXML, g.writeCache)
 	g.Lock.Lock()
 
 	if err := g.Driver.Dial(); err != nil {
 		return err
 	}
-	// So on the commit we are going to send our entire write cache, if we get any load error
-	// we return the full xml error response and exit
-	batchWriteReply, err := g.Driver.SendRaw(groupString)
-	if err != nil {
-		errInternal := g.Driver.Close()
-		g.Lock.Unlock()
-		return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
+	//These are net new adds. Need to ensure we write these first
+	if g.writeCache != "" {
+		groupCreateString := fmt.Sprintf(batchGroupStrXML, g.writeCache)
+		// So on the commit we are going to send our entire write cache, if we get any load error
+		// we return the full xml error response and exit
+		batchWriteReply, err := g.Driver.SendRaw(groupCreateString)
+		if err != nil {
+			errInternal := g.Driver.Close()
+			g.Lock.Unlock()
+			return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
+		}
+		// I am doing string checks simply because it is most likely more efficient
+		// than loading in through an xml parser
+		if strings.Contains(batchWriteReply.Data, "operation-failed") {
+			return fmt.Errorf("failed to write batch configuration %s", batchWriteReply.Data)
+		}
 	}
-	// I am doing string checks simply because it is most likely more efficient
-	// than loading in through an xml parser
-	if strings.Contains(batchWriteReply.Data, "operation-failed") {
-		return fmt.Errorf("failed to write batch configuration %s", batchWriteReply.Data)
+	if g.deleteCache != "" {
+		backDeleteString := fmt.Sprintf(batchDeleteStr, g.deleteCache)
+		// So on the commit we are going to send our entire write cache, if we get any load error
+		// we return the full xml error response and exit
+		batchDeleteReply, err := g.Driver.SendRaw(backDeleteString)
+		if err != nil {
+			errInternal := g.Driver.Close()
+			g.Lock.Unlock()
+			return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
+		}
+		// I am doing string checks simply because it is most likely more efficient
+		// than loading in through an xml parser
+		if strings.Contains(batchDeleteReply.Data, "operation-failed") {
+			return fmt.Errorf("failed to write batch delete %s", batchDeleteReply.Data)
+		}
 	}
-
 	// we have loaded the full configuration without any error
 	// before we can commit this we are going to do a commit check
 	// if it fails we return the full xml error

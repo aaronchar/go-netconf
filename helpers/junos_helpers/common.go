@@ -9,6 +9,7 @@ import (
 )
 
 type NCClient interface {
+	Close() error
 	ReadGroup(applygroup string) (string, error)
 	UpdateRawConfig(applygroup string, netconfcall string, commit bool) (string, error)
 	DeleteConfig(applygroup string) (string, error)

@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"strings"
 
+	"github.com/antchfx/xmlquery"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -75,4 +76,17 @@ func publicKeyFile(file string) ssh.AuthMethod {
 		return nil
 	}
 	return ssh.PublicKeys(key)
+}
+func findGroupInDoc(payload string, search string) ([]*xmlquery.Node, error) {
+	doc, err := xmlquery.Parse(strings.NewReader(payload))
+	if err != nil {
+		return nil, err
+	}
+	// reply will contain all the groups that have been provisioned on the device
+	// we now need to find the one related to this exact reference
+	nodes, err := xmlquery.QueryAll(doc, search)
+	if err != nil {
+		return nil, err
+	}
+	return nodes, nil
 }

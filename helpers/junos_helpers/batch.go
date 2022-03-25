@@ -1,8 +1,8 @@
 package junos_helpers
 
 import (
+	"encoding/xml"
 	"fmt"
-	"github.com/antchfx/xmlquery"
 	"log"
 	"strings"
 	"sync"
@@ -12,6 +12,12 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+const batchGroupStrXML = `<load-configuration action="merge" format="xml">
+<configuration>
+%s
+</configuration>
+</load-configuration>
+`
 const batchGetGroupStr = `<get-configuration database="committed" format="text" >
 <configuration>
 <groups></groups>
@@ -24,12 +30,40 @@ const batchGetGroupXMLStr = `<get-configuration>
   </configuration>
 </get-configuration>
 `
+const batchValidateCandidate = `<validate> 
+<source> 
+	<candidate/> 
+</source> 
+</validate>`
+const batchReadWrapper = `<configuration>%s</configuration>`
+
+const batchCommitStr = `<commit/>`
+
+const batchDeletePayload = `<groups operation="delete"><name>%[1]s</name></groups><apply-groups operation="delete">%[1]s</apply-groups>`
+
+const batchDeleteStr = `<edit-config>
+	<target>
+		<candidate/>
+	</target>
+	<default-operation>none</default-operation> 
+	<config>
+		<configuration>
+			%s
+		</configuration>
+	</config>
+</edit-config>`
+
+var (
+	batchConfigReplacer = strings.NewReplacer("<configuration>", "", "</configuration>", "")
+)
 
 // BatchGoNCClient type for storing data and wrapping functions
 type BatchGoNCClient struct {
-	Driver    driver.Driver
-	Lock      sync.RWMutex
-	readCache string
+	Driver      driver.Driver
+	Lock        sync.RWMutex
+	readCache   string
+	writeCache  string
+	deleteCache string
 }
 
 // Close is a functional thing to close the Driver
@@ -63,13 +97,53 @@ func (g *BatchGoNCClient) DeleteConfig(applygroup string) (string, error) {
 // Does not provide mandatory commit unlike DeleteConfig()
 func (g *BatchGoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 	g.Lock.Lock()
+	g.deleteCache += fmt.Sprintf(batchDeletePayload, applygroup)
 	g.Lock.Unlock()
 	return "", nil
 }
 
 // SendCommit is a wrapper for driver.SendRaw()
 func (g *BatchGoNCClient) SendCommit() error {
+
+	groupString := fmt.Sprintf(batchGroupStrXML, g.writeCache)
 	g.Lock.Lock()
+
+	if err := g.Driver.Dial(); err != nil {
+		return err
+	}
+	// So on the commit we are going to send our entire write cache, if we get any load error
+	// we return the full xml error response and exit
+	batchWriteReply, err := g.Driver.SendRaw(groupString)
+	if err != nil {
+		errInternal := g.Driver.Close()
+		g.Lock.Unlock()
+		return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
+	}
+	// I am doing string checks simply because it is most likely more efficient
+	// than loading in through an xml parser
+	if strings.Contains(batchWriteReply.Data, "operation-failed") {
+		return fmt.Errorf("failed to write batch configuration %s", batchWriteReply.Data)
+	}
+
+	// we have loaded the full configuration without any error
+	// before we can commit this we are going to do a commit check
+	// if it fails we return the full xml error
+	commitCheckReply, err := g.Driver.SendRaw(batchValidateCandidate)
+	if err != nil {
+		errInternal := g.Driver.Close()
+		g.Lock.Unlock()
+		return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
+	}
+
+	// I am doing string checks simply because it is most likely more efficient
+	// than loading in through an xml parser
+	if !strings.Contains(commitCheckReply.Data, "commit-check-success") {
+		return fmt.Errorf("candidate commit check failed %s", commitCheckReply.Data)
+	}
+	if _, err = g.Driver.SendRaw(batchCommitStr); err != nil {
+		g.Lock.Unlock()
+		return err
+	}
 	g.Lock.Unlock()
 	return nil
 }
@@ -81,23 +155,60 @@ func (g *BatchGoNCClient) MarshalGroup(id string, obj interface{}) error {
 	if err != nil {
 		return err
 	}
-	doc, err := xmlquery.Parse(strings.NewReader(reply))
+
+	nodes, err := findGroupInDoc(reply, fmt.Sprintf("//configuration/groups[name='%s']", id))
 	if err != nil {
-		panic(err)
+		return err
 	}
-	// reply will contain all the groups that have been provisioned on the device
-	// we now need to find the one related to this exact reference
+
+	if len(nodes) > 1 {
+		return fmt.Errorf("%s returned an invalid read cache node count %d", len(nodes))
+	}
+	var nodeXML string
+	if len(nodes) == 0 {
+		// Okay so this means we can't fine the node in the reply cache XML.
+		// the question is, should we check the write cache? could be a net new element
+		subNodes, err := findGroupInDoc(g.writeCache, fmt.Sprintf("//groups[name='%s']", id))
+		if err != nil {
+			return err
+		}
+		if len(subNodes) > 1 || len(subNodes) == 0 {
+			return fmt.Errorf("%s returned an invalid write cache node count %d", len(subNodes))
+		}
+		nodeXML = fmt.Sprintf(batchReadWrapper, subNodes[0].OutputXML(true))
+	} else {
+		nodeXML = fmt.Sprintf(batchReadWrapper, nodes[0].OutputXML(true))
+	}
+	if err := xml.Unmarshal([]byte(nodeXML), &obj); err != nil {
+		return err
+	}
+
 	return nil
 }
 
 // SendTransaction is a method that unnmarshals the XML, creates the transaction and passes in a commit
 func (g *BatchGoNCClient) SendTransaction(id string, obj interface{}, commit bool) error {
+	jconfig, err := xml.Marshal(obj)
+
+	if err != nil {
+		return err
+	}
+	if id != "" {
+		log.Println(id)
+	} else {
+		if _, err := g.SendRawConfig(string(jconfig), commit); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 // SendRawConfig is a wrapper for driver.SendRaw()
 func (g *BatchGoNCClient) SendRawConfig(netconfcall string, commit bool) (string, error) {
 	g.Lock.Lock()
+	// we need to strip off the <configuration> blocks since we want to send this \
+	// as one large configuration push
+	g.writeCache += batchConfigReplacer.Replace(netconfcall)
 	g.Lock.Unlock()
 	return "", nil
 }
@@ -124,7 +235,6 @@ func (g *BatchGoNCClient) ReadRawGroup(applygroup string) (string, error) {
 		}
 		g.readCache = reply.Data
 		output = g.readCache
-		println(output)
 	}
 	g.Lock.Unlock()
 	return output, nil

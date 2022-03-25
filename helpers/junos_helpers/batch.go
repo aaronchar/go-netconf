@@ -189,8 +189,8 @@ func (g *BatchGoNCClient) MarshalGroup(id string, obj interface{}) error {
 	}
 	var nodeXML string
 	if len(nodes) == 0 {
-		// Okay so this means we can't fine the node in the reply cache XML.
-		// the question is, should we check the write cache? could be a net new element
+		// Okay so this means we can't find the node in the reply cache XML, so we are going to \
+		// check the pending write cache as well
 		subNodes, err := findGroupInDoc(g.writeCache, fmt.Sprintf("//groups[name='%s']", id))
 		if err != nil {
 			return err

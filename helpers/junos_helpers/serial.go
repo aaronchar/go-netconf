@@ -340,7 +340,7 @@ func (g *GoNCClient) ReadRawGroup(applygroup string) (string, error) {
 	return reply.Data, nil
 }
 
-// NewClient returns gonetconf new client driver
+// NewSerialClient returns gonetconf new client driver
 func NewSerialClient(username string, password string, sshkey string, address string, port int) (NCClient, error) {
 
 	// Dummy interface var ready for loading from inputs

@@ -263,7 +263,7 @@ func (g *BatchGoNCClient) ReadRawGroup(applygroup string) (string, error) {
 	return output, nil
 }
 
-// NewClient returns gonetconf new client driver
+// NewBatchClient returns gonetconf new client driver
 func NewBatchClient(username string, password string, sshkey string, address string, port int) (NCClient, error) {
 
 	// Dummy interface var ready for loading from inputs

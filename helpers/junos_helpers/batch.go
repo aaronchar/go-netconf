@@ -82,6 +82,8 @@ func (g *BatchGoNCClient) ReadGroup(applygroup string) (string, error) {
 // UpdateRawConfig deletes group data and replaces it (for Update in TF)
 func (g *BatchGoNCClient) UpdateRawConfig(applygroup string, netconfcall string, commit bool) (string, error) {
 	g.Lock.Lock()
+	g.deleteCache += fmt.Sprintf(batchDeletePayload, applygroup)
+	g.writeCache += batchConfigReplacer.Replace(netconfcall)
 	g.Lock.Unlock()
 	return "", nil
 }
@@ -215,7 +217,7 @@ func (g *BatchGoNCClient) SendTransaction(id string, obj interface{}, commit boo
 		return err
 	}
 	if id != "" {
-		log.Println(id)
+		_, err = g.UpdateRawConfig(id, string(jconfig), commit)
 	} else {
 		if _, err := g.SendRawConfig(string(jconfig), commit); err != nil {
 			return err

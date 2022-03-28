@@ -113,6 +113,7 @@ func (g *BatchGoNCClient) SendCommit() error {
 	g.Lock.Lock()
 
 	if err := g.Driver.Dial(); err != nil {
+		g.Lock.Unlock()
 		return err
 	}
 	if g.deleteCache != "" {
@@ -244,6 +245,7 @@ func (g *BatchGoNCClient) ReadRawGroup(applygroup string) (string, error) {
 	// after that we depend up on this cache for the duration of the execution
 	if g.readCache == "" {
 		if err := g.Driver.Dial(); err != nil {
+			g.Lock.Unlock()
 			log.Fatal(err)
 		}
 		reply, err := g.Driver.SendRaw(batchGetGroupXMLStr)

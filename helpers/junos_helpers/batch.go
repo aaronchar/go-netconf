@@ -115,23 +115,6 @@ func (g *BatchGoNCClient) SendCommit() error {
 	if err := g.Driver.Dial(); err != nil {
 		return err
 	}
-	//These are net new adds. Need to ensure we write these first
-	if g.writeCache != "" {
-		groupCreateString := fmt.Sprintf(batchGroupStrXML, g.writeCache)
-		// So on the commit we are going to send our entire write cache, if we get any load error
-		// we return the full xml error response and exit
-		batchWriteReply, err := g.Driver.SendRaw(groupCreateString)
-		if err != nil {
-			errInternal := g.Driver.Close()
-			g.Lock.Unlock()
-			return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
-		}
-		// I am doing string checks simply because it is most likely more efficient
-		// than loading in through an xml parser
-		if strings.Contains(batchWriteReply.Data, "operation-failed") {
-			return fmt.Errorf("failed to write batch configuration %s", batchWriteReply.Data)
-		}
-	}
 	if g.deleteCache != "" {
 		backDeleteString := fmt.Sprintf(batchDeleteStr, g.deleteCache)
 		// So on the commit we are going to send our entire write cache, if we get any load error
@@ -146,6 +129,22 @@ func (g *BatchGoNCClient) SendCommit() error {
 		// than loading in through an xml parser
 		if strings.Contains(batchDeleteReply.Data, "operation-failed") {
 			return fmt.Errorf("failed to write batch delete %s", batchDeleteReply.Data)
+		}
+	}
+	if g.writeCache != "" {
+		groupCreateString := fmt.Sprintf(batchGroupStrXML, g.writeCache)
+		// So on the commit we are going to send our entire write cache, if we get any load error
+		// we return the full xml error response and exit
+		batchWriteReply, err := g.Driver.SendRaw(groupCreateString)
+		if err != nil {
+			errInternal := g.Driver.Close()
+			g.Lock.Unlock()
+			return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
+		}
+		// I am doing string checks simply because it is most likely more efficient
+		// than loading in through an xml parser
+		if strings.Contains(batchWriteReply.Data, "operation-failed") {
+			return fmt.Errorf("failed to write batch configuration %s", batchWriteReply.Data)
 		}
 	}
 	// we have loaded the full configuration without any error

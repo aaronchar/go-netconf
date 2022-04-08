@@ -82,8 +82,8 @@ func (g *BatchGoNCClient) ReadGroup(applygroup string) (string, error) {
 // UpdateRawConfig deletes group data and replaces it (for Update in TF)
 func (g *BatchGoNCClient) UpdateRawConfig(applygroup string, netconfcall string, commit bool) (string, error) {
 	g.Lock.Lock()
-	g.deleteCache += fmt.Sprintf(batchDeletePayload, applygroup)
-	g.writeCache += batchConfigReplacer.Replace(netconfcall)
+	g.addToDeleteCache(applygroup)
+	g.addToWriteCache(netconfcall)
 	g.Lock.Unlock()
 	return "", nil
 }
@@ -101,8 +101,7 @@ func (g *BatchGoNCClient) DeleteConfigNoCommit(applygroup string) (string, error
 	g.Lock.Lock()
 	// Due to the way this functions any resource deletes will only happen client site
 	// however a full destroy will be committed to the server.
-	g.deleteCache += fmt.Sprintf(batchDeletePayload, applygroup)
-
+	g.addToDeleteCache(applygroup)
 	g.Lock.Unlock()
 	return "", nil
 }
@@ -173,39 +172,39 @@ func (g *BatchGoNCClient) SendCommit() error {
 
 // MarshalGroup accepts a struct of type X and then marshals data onto it
 func (g *BatchGoNCClient) MarshalGroup(id string, obj interface{}) error {
-
-	reply, err := g.ReadRawGroup(id)
-	if err != nil {
-		return err
-	}
-
-	nodes, err := findGroupInDoc(reply, fmt.Sprintf("//configuration/groups[name='%s']", id))
-	if err != nil {
-		return err
-	}
-
-	if len(nodes) > 1 {
-		return fmt.Errorf("%s returned an invalid read cache node count %d", len(nodes))
-	}
+	// Because of the order of operation we are always going to have to read from the /
+	// write-cache first since that will have our latest state. If an element does not exist /
+	// in the write-cache we will then check read cache which has the current remote state.
 	var nodeXML string
-	if len(nodes) == 0 {
-		// Okay so this means we can't find the node in the reply cache XML, so we are going to \
-		// check the pending write cache as well
-		subNodes, err := findGroupInDoc(g.writeCache, fmt.Sprintf("//groups[name='%s']", id))
+
+	writeNodes, err := findGroupInDoc(g.writeCache, fmt.Sprintf("//groups[name='%s']", id))
+	if err != nil {
+		return err
+	}
+	if len(writeNodes) > 1 {
+		return fmt.Errorf("%s returned an invalid read cache node count %d", id, len(writeNodes))
+	} else if len(writeNodes) == 0 {
+		// we don't have anything in our write-cache for this apply-group. So we are going to check the
+		// reply-cache which contains the latest remote state.
+		replyCache, err := g.ReadRawGroup(id)
+		if err != nil {
+			return err
+		}
+		subNodes, err := findGroupInDoc(replyCache, fmt.Sprintf("//groups[name='%s']", id))
 		if err != nil {
 			return err
 		}
 		if len(subNodes) > 1 || len(subNodes) == 0 {
-			return fmt.Errorf("%s returned an invalid write cache node count %d", len(subNodes))
+			return fmt.Errorf("%s returned an invalid write cache node count %d", id, len(subNodes))
 		}
 		nodeXML = fmt.Sprintf(batchReadWrapper, subNodes[0].OutputXML(true))
 	} else {
-		nodeXML = fmt.Sprintf(batchReadWrapper, nodes[0].OutputXML(true))
+		nodeXML = fmt.Sprintf(batchReadWrapper, writeNodes[0].OutputXML(true))
 	}
+
 	if err := xml.Unmarshal([]byte(nodeXML), &obj); err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -229,9 +228,7 @@ func (g *BatchGoNCClient) SendTransaction(id string, obj interface{}, commit boo
 // SendRawConfig is a wrapper for driver.SendRaw()
 func (g *BatchGoNCClient) SendRawConfig(netconfcall string, commit bool) (string, error) {
 	g.Lock.Lock()
-	// we need to strip off the <configuration> blocks since we want to send this \
-	// as one large configuration push
-	g.writeCache += batchConfigReplacer.Replace(netconfcall)
+	g.addToWriteCache(netconfcall)
 	g.Lock.Unlock()
 	return "", nil
 }
@@ -257,11 +254,23 @@ func (g *BatchGoNCClient) ReadRawGroup(applygroup string) (string, error) {
 		if err := g.Driver.Close(); err != nil {
 			return "", err
 		}
-		g.readCache = reply.Data
+		g.addToReadCache(reply.Data)
 		output = g.readCache
 	}
 	g.Lock.Unlock()
 	return output, nil
+}
+
+func (g *BatchGoNCClient) addToReadCache(in string) {
+	g.readCache = in
+}
+func (g *BatchGoNCClient) addToWriteCache(in string) {
+	// we need to strip off the <configuration> blocks since we want to send this \
+	// as one large configuration push without changing the way the upstream system works
+	g.writeCache += batchConfigReplacer.Replace(in)
+}
+func (g *BatchGoNCClient) addToDeleteCache(in string) {
+	g.deleteCache += fmt.Sprintf(batchDeletePayload, in)
 }
 
 // NewBatchClient returns gonetconf new client driver

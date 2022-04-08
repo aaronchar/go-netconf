@@ -375,3 +375,14 @@ func NewSerialClient(username string, password string, sshkey string, address st
 
 	return &GoNCClient{Driver: nconf}, nil
 }
+
+//Deprecated - NewClient has been superseded by NewSerialClient / NewBatchClient respecitvly. The return type is now an interface
+// that will allow for greater flexibility going forward.
+func NewClient(username string, password string, sshkey string, address string, port int) (*GoNCClient, error) {
+	serial, err := NewSerialClient(username, password, sshkey, address, port)
+	if err != nil {
+		return nil, err
+	}
+	out := serial.(*GoNCClient)
+	return out, nil
+}

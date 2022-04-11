@@ -90,3 +90,12 @@ func findGroupInDoc(payload string, search string) ([]*xmlquery.Node, error) {
 	}
 	return nodes, nil
 }
+func findApplyGroupName(payload string) (string, error) {
+	doc, err := xmlquery.Parse(strings.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	n := xmlquery.FindOne(doc, "//apply-groups")
+	return n.InnerText(), nil
+
+}

@@ -61,11 +61,12 @@ var (
 
 // BatchGoNCClient type for storing data and wrapping functions
 type BatchGoNCClient struct {
-	Driver      driver.Driver
-	Lock        sync.RWMutex
-	readCache   string
-	writeCache  string
-	deleteCache string
+	Driver driver.Driver
+	Lock   sync.RWMutex
+	BH     BatchHelper
+	// readCache   *sync.Map
+	// writeCache  *sync.Map
+	// deleteCache string
 }
 
 // Close is a functional thing to close the Driver
@@ -83,11 +84,16 @@ func (g *BatchGoNCClient) ReadGroup(applygroup string) (string, error) {
 
 // UpdateRawConfig deletes group data and replaces it (for Update in TF)
 func (g *BatchGoNCClient) UpdateRawConfig(applygroup string, netconfcall string, commit bool) (string, error) {
+	// we are filling up the read buffer, this will only be done once regardless of the amount of \
 	g.Lock.Lock()
 	defer g.Lock.Unlock()
+	if err := g.BH.AddToDeleteMap(applygroup); err != nil {
+		return "", err
+	}
+	if err := g.BH.AddToWriteMap(netconfcall); err != nil {
+		return "", err
+	}
 
-	g.cacheAddToDelete(applygroup)
-	g.cacheAddToWrite(netconfcall)
 	return "", nil
 }
 
@@ -104,10 +110,9 @@ func (g *BatchGoNCClient) DeleteConfig(applygroup string) (string, error) {
 func (g *BatchGoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 	g.Lock.Lock()
 	defer g.Lock.Unlock()
-
-	// Due to the way this functions any resource deletes will only happen client site
-	// however a full destroy will be committed to the server.
-	g.cacheAddToDelete(applygroup)
+	if err := g.BH.AddToDeleteMap(applygroup); err != nil {
+		return "", err
+	}
 	return "", nil
 }
 
@@ -117,8 +122,8 @@ func (g *BatchGoNCClient) SendCommit() error {
 	g.Lock.Lock()
 	defer g.Lock.Unlock()
 
-	deleteCache := g.cacheReadFromDelete()
-	writeCache := g.cacheReadFromWrite()
+	deleteCache := g.BH.QueryAllGroupDeletes()
+	writeCache := g.BH.QueryAllGroupWrites()
 	if err := g.Driver.Dial(); err != nil {
 		return err
 	}
@@ -139,6 +144,7 @@ func (g *BatchGoNCClient) SendCommit() error {
 		}
 	}
 	if writeCache != "" {
+
 		groupCreateString := fmt.Sprintf(batchGroupStrXML, writeCache)
 		// So on the commit we are going to send our entire write-cache, if we get any load error
 		// we return the full xml error response and exit
@@ -175,11 +181,12 @@ func (g *BatchGoNCClient) SendCommit() error {
 
 // MarshalGroup accepts a struct of type X and then marshals data onto it
 func (g *BatchGoNCClient) MarshalGroup(id string, obj interface{}) error {
-	nodeXML, err := g.getReadXMLFromCaches(id)
+	reply, err := g.ReadRawGroup(id)
 	if err != nil {
 		return err
 	}
-	if err := xml.Unmarshal([]byte(nodeXML), &obj); err != nil {
+	err = xml.Unmarshal([]byte(reply), &obj)
+	if err != nil {
 		return err
 	}
 	return nil
@@ -207,7 +214,7 @@ func (g *BatchGoNCClient) SendRawConfig(netconfcall string, commit bool) (string
 	g.Lock.Lock()
 	defer g.Lock.Unlock()
 
-	g.cacheAddToWrite(netconfcall)
+	g.BH.AddToWriteMap(netconfcall)
 	return "", nil
 }
 
@@ -217,10 +224,7 @@ func (g *BatchGoNCClient) ReadRawGroup(applygroup string) (string, error) {
 	g.Lock.Lock()
 	defer g.Lock.Unlock()
 
-	output := g.cacheReadFromRemote()
-	// We only want to capture all the groups the first execution
-	// after that we depend up on this cache for the duration of the execution
-	if output == "" {
+	if !g.BH.IsHydrated() {
 		if err := g.Driver.Dial(); err != nil {
 			errInternal := g.Driver.Close()
 			return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
@@ -233,62 +237,28 @@ func (g *BatchGoNCClient) ReadRawGroup(applygroup string) (string, error) {
 		if err := g.Driver.Close(); err != nil {
 			return "", err
 		}
-		g.cacheAddToRemoteRead(reply.Data)
-		output = g.cacheReadFromRemote()
+		g.BH.AddToReadMap(reply.Data)
 	}
-	return output, nil
+	return g.BH.QueryGroupXMLFromCache(applygroup)
 }
 
-func (g *BatchGoNCClient) cacheAddToRemoteRead(in string) {
-	g.readCache = in
-}
-func (g *BatchGoNCClient) cacheAddToWrite(in string) {
-	// we need to strip off the <configuration> blocks since we want to send this \
-	// as one large configuration push without changing the way the upstream system works
-	g.writeCache += batchConfigReplacer.Replace(in)
-}
-func (g *BatchGoNCClient) cacheAddToDelete(in string) {
-	g.deleteCache += fmt.Sprintf(batchDeletePayload, in)
-}
-func (g *BatchGoNCClient) cacheReadFromWrite() string {
-	return g.writeCache
-}
-func (g *BatchGoNCClient) cacheReadFromRemote() string {
-	return g.readCache
-}
-func (g *BatchGoNCClient) cacheReadFromDelete() string {
-	return g.deleteCache
-}
-func (g *BatchGoNCClient) getReadXMLFromCaches(id string) (string, error) {
-	// Because of the order of operation we are always going to have to read from the /
-	// write-cache first since that will have our latest state. If an element does not exist /
-	// in the write-cache we will then check read cache which has the current remote state.
-	var nodeXML string
-	writeNodes, err := findGroupInDoc(g.cacheReadFromWrite(), fmt.Sprintf("//groups[name='%s']", id))
+// This is called on instantion of the batch client, it is used to hydrate
+// the read cahce.
+func (g *BatchGoNCClient) hydrateReadCache() error {
+	if err := g.Driver.Dial(); err != nil {
+		errInternal := g.Driver.Close()
+		return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
+	}
+	reply, err := g.Driver.SendRaw(batchGetGroupXMLStr)
 	if err != nil {
-		return nodeXML, err
+		errInternal := g.Driver.Close()
+		return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 	}
-	if len(writeNodes) > 1 {
-		return nodeXML, fmt.Errorf("%s returned an invalid read cache node count %d", id, len(writeNodes))
-	} else if len(writeNodes) == 0 {
-		// we don't have anything in our write-cache for this apply-group. So we are going to check the
-		// reply-cache which contains the latest remote state.
-		replyCache, err := g.ReadRawGroup(id)
-		if err != nil {
-			return nodeXML, err
-		}
-		subNodes, err := findGroupInDoc(replyCache, fmt.Sprintf("//groups[name='%s']", id))
-		if err != nil {
-			return nodeXML, err
-		}
-		if len(subNodes) > 1 || len(subNodes) == 0 {
-			return nodeXML, fmt.Errorf("%s returned an invalid write cache node count %d", id, len(subNodes))
-		}
-		nodeXML = fmt.Sprintf(batchReadWrapper, subNodes[0].OutputXML(true))
-	} else {
-		nodeXML = fmt.Sprintf(batchReadWrapper, writeNodes[0].OutputXML(true))
+	if err := g.Driver.Close(); err != nil {
+		return err
 	}
-	return nodeXML, nil
+	g.BH.AddToReadMap(reply.Data)
+	return nil
 }
 
 // NewBatchClient returns gonetconf new client driver
@@ -323,6 +293,16 @@ func NewBatchClient(username string, password string, sshkey string, address str
 	}
 
 	nconf = nc
+	bh := NewBatchHelper()
 
-	return &BatchGoNCClient{Driver: nconf}, nil
+	c := &BatchGoNCClient{
+		Driver: nconf,
+		BH:     bh,
+	}
+
+	// // we are hydrating the read cache on client creation, this should save time during the Terrafrom calls process
+	// if err := c.hydrateReadCache(); err != nil {
+	// 	return nil, err
+	// }
+	return c, nil
 }

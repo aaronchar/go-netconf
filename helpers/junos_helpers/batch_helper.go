@@ -18,7 +18,7 @@ type BatchHelper interface {
 	IsHydrated() bool
 }
 type batchHelper struct {
-	reachCacheMap       *sync.Map
+	readCacheMap        *sync.Map
 	writeCacheMap       *sync.Map
 	deleteCacheMap      *sync.Map
 	readFullCache       string
@@ -27,7 +27,7 @@ type batchHelper struct {
 
 func NewBatchHelper() BatchHelper {
 	return &batchHelper{
-		reachCacheMap:  &sync.Map{},
+		readCacheMap:   &sync.Map{},
 		writeCacheMap:  &sync.Map{},
 		deleteCacheMap: &sync.Map{},
 	}
@@ -40,9 +40,9 @@ func (b *batchHelper) AddToReadMap(in string) error {
 	}
 	for _, v := range applyGroupNodes {
 		k := v.InnerText()
-		ev, _ := b.reachCacheMap.LoadOrStore(k, []string{})
+		ev, _ := b.readCacheMap.LoadOrStore(k, []string{})
 		nv := ev.([]string)
-		b.reachCacheMap.Store(k, append(nv, v.Parent.OutputXML(true)))
+		b.readCacheMap.Store(k, append(nv, v.Parent.OutputXML(true)))
 	}
 	b.readGroupIsHydrated = true
 	return nil
@@ -82,7 +82,7 @@ func (b *batchHelper) QueryGroupXMLFromCache(id string) (string, error) {
 		}
 		return fmt.Sprintf(batchReadWrapper, out), nil
 	}
-	if readElements, found := b.reachCacheMap.Load(id); found {
+	if readElements, found := b.readCacheMap.Load(id); found {
 		var out string
 		e := readElements.([]string)
 		for _, vv := range e {
@@ -94,7 +94,7 @@ func (b *batchHelper) QueryGroupXMLFromCache(id string) (string, error) {
 }
 func (b *batchHelper) QueryGroupReadMap(id string) string {
 	var out string
-	if ev, ok := b.reachCacheMap.Load(id); ok {
+	if ev, ok := b.readCacheMap.Load(id); ok {
 		e := ev.([]string)
 		for _, vv := range e {
 			out += vv
@@ -114,7 +114,7 @@ func (b *batchHelper) QueryGroupWriteMap(id string) string {
 }
 func (b *batchHelper) QueryAllGroupReads() string {
 	var out string
-	b.reachCacheMap.Range(func(k interface{}, v interface{}) bool {
+	b.readCacheMap.Range(func(k interface{}, v interface{}) bool {
 		s := v.([]string)
 		for _, vv := range s {
 			out += vv

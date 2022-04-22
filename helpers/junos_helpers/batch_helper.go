@@ -12,6 +12,7 @@ type BatchHelper interface {
 	QueryGroupXMLFromCache(id string) (string, error)
 	QueryGroupReadMap(id string) string
 	QueryGroupWriteMap(id string) string
+	QueryGroupDeleteMap(id string) string
 	QueryAllGroupReads() string
 	QueryAllGroupWrites() string
 	QueryAllGroupDeletes() string
@@ -103,6 +104,14 @@ func (b *batchHelper) QueryGroupReadMap(id string) string {
 func (b *batchHelper) QueryGroupWriteMap(id string) string {
 	var out string
 	if ev, ok := b.writeCacheMap.Load(id); ok {
+		e := ev.(string)
+		out += e
+	}
+	return out
+}
+func (b *batchHelper) QueryGroupDeleteMap(id string) string {
+	var out string
+	if ev, ok := b.deleteCacheMap.Load(id); ok {
 		e := ev.(string)
 		out += e
 	}

@@ -64,9 +64,6 @@ type BatchGoNCClient struct {
 	Driver driver.Driver
 	Lock   sync.RWMutex
 	BH     BatchHelper
-	// readCache   *sync.Map
-	// writeCache  *sync.Map
-	// deleteCache string
 }
 
 // Close is a functional thing to close the Driver
@@ -138,7 +135,7 @@ func (g *BatchGoNCClient) SendCommit() error {
 			return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 		// I am doing string checks simply because it is most likely more efficient
-		// than loading in through an xml parser
+		// than loading in through a xml parser
 		if strings.Contains(batchDeleteReply.Data, "operation-failed") {
 			return fmt.Errorf("failed to write batch delete %s", batchDeleteReply.Data)
 		}
@@ -154,7 +151,7 @@ func (g *BatchGoNCClient) SendCommit() error {
 			return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 		// I am doing string checks simply because it is most likely more efficient
-		// than loading in through an xml parser
+		// than loading in through a xml parser
 		if strings.Contains(batchWriteReply.Data, "operation-failed") {
 			return fmt.Errorf("failed to write batch configuration %s", batchWriteReply.Data)
 		}
@@ -214,7 +211,9 @@ func (g *BatchGoNCClient) SendRawConfig(netconfcall string, commit bool) (string
 	g.Lock.Lock()
 	defer g.Lock.Unlock()
 
-	g.BH.AddToWriteMap(netconfcall)
+	if err := g.BH.AddToWriteMap(netconfcall); err != nil {
+		return "", err
+	}
 	return "", nil
 }
 
@@ -237,13 +236,15 @@ func (g *BatchGoNCClient) ReadRawGroup(applygroup string) (string, error) {
 		if err := g.Driver.Close(); err != nil {
 			return "", err
 		}
-		g.BH.AddToReadMap(reply.Data)
+		if err := g.BH.AddToReadMap(reply.Data); err != nil {
+			return "", err
+		}
 	}
 	return g.BH.QueryGroupXMLFromCache(applygroup)
 }
 
-// This is called on instantion of the batch client, it is used to hydrate
-// the read cahce.
+// This is called on instantiation of the batch client, it is used to hydrate
+// the read cache.
 func (g *BatchGoNCClient) hydrateReadCache() error {
 	if err := g.Driver.Dial(); err != nil {
 		errInternal := g.Driver.Close()
@@ -257,7 +258,9 @@ func (g *BatchGoNCClient) hydrateReadCache() error {
 	if err := g.Driver.Close(); err != nil {
 		return err
 	}
-	g.BH.AddToReadMap(reply.Data)
+	if err := g.BH.AddToReadMap(reply.Data); err != nil {
+		return err
+	}
 	return nil
 }
 

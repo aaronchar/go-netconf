@@ -40,9 +40,11 @@ func (b *batchHelper) AddToReadMap(in string) error {
 	}
 	for _, v := range applyGroupNodes {
 		k := v.InnerText()
-		ev, _ := b.readCacheMap.LoadOrStore(k, []string{})
-		nv := ev.([]string)
-		b.readCacheMap.Store(k, append(nv, v.Parent.OutputXML(true)))
+		ev, _ := b.readCacheMap.LoadOrStore(k, "")
+		nv := ev.(string)
+		nv += v.Parent.OutputXML(true)
+
+		b.readCacheMap.Store(k, nv)
 	}
 	b.readGroupIsHydrated = true
 	return nil
@@ -55,9 +57,10 @@ func (b *batchHelper) AddToWriteMap(in string) error {
 	if err != nil {
 		return err
 	}
-	ev, _ := b.writeCacheMap.LoadOrStore(groupName, []string{})
-	nv := ev.([]string)
-	b.writeCacheMap.Store(groupName, append(nv, payload))
+	ev, _ := b.writeCacheMap.LoadOrStore(groupName, "")
+	nv := ev.(string)
+	nv += payload
+	b.writeCacheMap.Store(groupName, nv)
 	return nil
 }
 func (b *batchHelper) AddToDeleteMap(in string) error {
@@ -67,27 +70,24 @@ func (b *batchHelper) AddToDeleteMap(in string) error {
 	if err != nil {
 		return err
 	}
-	ev, _ := b.deleteCacheMap.LoadOrStore(groupName, []string{})
-	nv := ev.([]string)
-	b.deleteCacheMap.Store(groupName, append(nv, payload))
+	ev, _ := b.deleteCacheMap.LoadOrStore(groupName, "")
+	nv := ev.(string)
+	nv += payload
+	b.deleteCacheMap.Store(groupName, nv)
 	return nil
 }
 func (b *batchHelper) QueryGroupXMLFromCache(id string) (string, error) {
 
 	if writeElements, found := b.writeCacheMap.Load(id); found {
 		var out string
-		e := writeElements.([]string)
-		for _, vv := range e {
-			out += vv
-		}
+		e := writeElements.(string)
+		out += e
 		return fmt.Sprintf(batchReadWrapper, out), nil
 	}
 	if readElements, found := b.readCacheMap.Load(id); found {
 		var out string
-		e := readElements.([]string)
-		for _, vv := range e {
-			out += vv
-		}
+		e := readElements.(string)
+		out += e
 		return fmt.Sprintf(batchReadWrapper, out), nil
 	}
 	return "", nil
@@ -95,30 +95,24 @@ func (b *batchHelper) QueryGroupXMLFromCache(id string) (string, error) {
 func (b *batchHelper) QueryGroupReadMap(id string) string {
 	var out string
 	if ev, ok := b.readCacheMap.Load(id); ok {
-		e := ev.([]string)
-		for _, vv := range e {
-			out += vv
-		}
+		e := ev.(string)
+		out += e
 	}
 	return out
 }
 func (b *batchHelper) QueryGroupWriteMap(id string) string {
 	var out string
 	if ev, ok := b.writeCacheMap.Load(id); ok {
-		e := ev.([]string)
-		for _, vv := range e {
-			out += vv
-		}
+		e := ev.(string)
+		out += e
 	}
 	return out
 }
 func (b *batchHelper) QueryAllGroupReads() string {
 	var out string
 	b.readCacheMap.Range(func(k interface{}, v interface{}) bool {
-		s := v.([]string)
-		for _, vv := range s {
-			out += vv
-		}
+		s := v.(string)
+		out += s
 		return true
 	})
 	return out
@@ -126,10 +120,8 @@ func (b *batchHelper) QueryAllGroupReads() string {
 func (b *batchHelper) QueryAllGroupWrites() string {
 	var out string
 	b.writeCacheMap.Range(func(k interface{}, v interface{}) bool {
-		s := v.([]string)
-		for _, vv := range s {
-			out += vv
-		}
+		s := v.(string)
+		out += s
 		return true
 	})
 	return out
@@ -137,10 +129,8 @@ func (b *batchHelper) QueryAllGroupWrites() string {
 func (b *batchHelper) QueryAllGroupDeletes() string {
 	var out string
 	b.deleteCacheMap.Range(func(k interface{}, v interface{}) bool {
-		s := v.([]string)
-		for _, vv := range s {
-			out += vv
-		}
+		s := v.(string)
+		out += s
 		return true
 	})
 	return out

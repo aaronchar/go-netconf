@@ -75,7 +75,8 @@ func (g *BatchGoNCClient) Close() error {
 // ReadGroup is a helper function
 func (g *BatchGoNCClient) ReadGroup(applygroup string) (string, error) {
 	g.Lock.Lock()
-	g.Lock.Unlock()
+	defer g.Lock.Unlock()
+
 	return "", nil
 }
 
@@ -84,6 +85,7 @@ func (g *BatchGoNCClient) UpdateRawConfig(applygroup string, netconfcall string,
 	// we are filling up the read buffer, this will only be done once regardless of the amount of \
 	g.Lock.Lock()
 	defer g.Lock.Unlock()
+
 	if err := g.BH.AddToDeleteMap(applygroup); err != nil {
 		return "", err
 	}
@@ -107,6 +109,7 @@ func (g *BatchGoNCClient) DeleteConfig(applygroup string) (string, error) {
 func (g *BatchGoNCClient) DeleteConfigNoCommit(applygroup string) (string, error) {
 	g.Lock.Lock()
 	defer g.Lock.Unlock()
+
 	if err := g.BH.AddToDeleteMap(applygroup); err != nil {
 		return "", err
 	}
@@ -126,34 +129,34 @@ func (g *BatchGoNCClient) SendCommit() error {
 	}
 
 	if deleteCache != "" {
-		backDeleteString := fmt.Sprintf(batchDeleteStr, deleteCache)
+		bulkDeleteString := fmt.Sprintf(batchDeleteStr, deleteCache)
 		// So on the commit we are going to send our entire delete-cache, if we get any load error
 		// we return the full xml error response and exit
-		batchDeleteReply, err := g.Driver.SendRaw(backDeleteString)
+		bulkDeleteReply, err := g.Driver.SendRaw(bulkDeleteString)
 		if err != nil {
 			errInternal := g.Driver.Close()
 			return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 		// I am doing string checks simply because it is most likely more efficient
 		// than loading in through a xml parser
-		if strings.Contains(batchDeleteReply.Data, "operation-failed") {
-			return fmt.Errorf("failed to write batch delete %s", batchDeleteReply.Data)
+		if strings.Contains(bulkDeleteReply.Data, "operation-failed") {
+			return fmt.Errorf("failed to write batch delete %s", bulkDeleteReply.Data)
 		}
 	}
 	if writeCache != "" {
 
-		groupCreateString := fmt.Sprintf(batchGroupStrXML, writeCache)
+		bulkCreateString := fmt.Sprintf(batchGroupStrXML, writeCache)
 		// So on the commit we are going to send our entire write-cache, if we get any load error
 		// we return the full xml error response and exit
-		batchWriteReply, err := g.Driver.SendRaw(groupCreateString)
+		bulkWriteReply, err := g.Driver.SendRaw(bulkCreateString)
 		if err != nil {
 			errInternal := g.Driver.Close()
 			return fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
 		}
 		// I am doing string checks simply because it is most likely more efficient
 		// than loading in through a xml parser
-		if strings.Contains(batchWriteReply.Data, "operation-failed") {
-			return fmt.Errorf("failed to write batch configuration %s", batchWriteReply.Data)
+		if strings.Contains(bulkWriteReply.Data, "operation-failed") {
+			return fmt.Errorf("failed to write batch configuration %s", bulkWriteReply.Data)
 		}
 	}
 	// we have loaded the full configuration without any error
@@ -215,6 +218,30 @@ func (g *BatchGoNCClient) SendRawConfig(netconfcall string, commit bool) (string
 		return "", err
 	}
 	return "", nil
+}
+
+// SendRawNetconfConfig - This is meant for sending a raw NETCONF strings without any wrapping around the input
+func (g *BatchGoNCClient) SendRawNetconfConfig(netconfcall string) (string, error) {
+
+	g.Lock.Lock()
+	defer g.Lock.Unlock()
+
+	if err := g.Driver.Dial(); err != nil {
+		return "", err
+	}
+
+	reply, err := g.Driver.SendRaw(netconfcall)
+	if err != nil {
+		errInternal := g.Driver.Close()
+		g.Lock.Unlock()
+		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
+	}
+
+	if err = g.Driver.Close(); err != nil {
+		return "", err
+	}
+
+	return reply.Data, nil
 }
 
 // ReadRawGroup is a helper function
@@ -302,10 +329,5 @@ func NewBatchClient(username string, password string, sshkey string, address str
 		Driver: nconf,
 		BH:     bh,
 	}
-
-	// // we are hydrating the read cache on client creation, this should save time during the Terrafrom calls process
-	// if err := c.hydrateReadCache(); err != nil {
-	// 	return nil, err
-	// }
 	return c, nil
 }

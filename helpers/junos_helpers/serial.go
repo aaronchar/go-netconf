@@ -311,6 +311,30 @@ func (g *GoNCClient) SendRawConfig(netconfcall string, commit bool) (string, err
 	return reply.Data, nil
 }
 
+// SendRawNetconfConfig - This is meant for sending a raw NETCONF strings without any wrapping around the input
+func (g *GoNCClient) SendRawNetconfConfig(netconfcall string) (string, error) {
+
+	g.Lock.Lock()
+	defer g.Lock.Unlock()
+
+	if err := g.Driver.Dial(); err != nil {
+		return "", err
+	}
+
+	reply, err := g.Driver.SendRaw(netconfcall)
+	if err != nil {
+		errInternal := g.Driver.Close()
+		g.Lock.Unlock()
+		return "", fmt.Errorf("driver error: %+v, driver close error: %+s", err, errInternal)
+	}
+
+	if err = g.Driver.Close(); err != nil {
+		return "", err
+	}
+
+	return reply.Data, nil
+}
+
 // ReadRawGroup is a helper function
 func (g *GoNCClient) ReadRawGroup(applygroup string) (string, error) {
 	g.Lock.Lock()

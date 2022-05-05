@@ -20,6 +20,7 @@ type NCClient interface {
 	SendTransaction(id string, obj interface{}, commit bool) error
 	SendRawConfig(netconfcall string, commit bool) (string, error)
 	ReadRawGroup(applygroup string) (string, error)
+	SendRawNetconfConfig(netconfcall string) (string, error)
 }
 
 // parseGroupData is a function that cleans up the returned data for generic config groups
